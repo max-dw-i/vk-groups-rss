@@ -1,5 +1,7 @@
 login
 password
+C:\vk_feeds
+True
 club1
 club2
 club3
