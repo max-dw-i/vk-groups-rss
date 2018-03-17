@@ -1,0 +1,5 @@
+login
+password
+club1
+club2
+club3
