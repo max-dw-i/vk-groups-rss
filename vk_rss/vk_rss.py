@@ -1,4 +1,5 @@
-"""Module create RSS feeds (XML files) based on the posts from
+"""
+Module creates RSS feeds (XML files) based on the posts from
 vk.com groups. One feed for one group.
 
 To use it, type in init_data.txt your login on the first line,
@@ -20,143 +21,166 @@ from tzlocal import get_localzone
 from vk_api import AuthError, VkApi, VkApiError
 
 
-def image_tag(url, description):
-    """Returns html tags for an image and its description"""
-    return '<img src="{}" width="600"><p>{}</p>'.format(url, description)
+class Attachment():
+    """
+    Represents a post attachment
+    """
+
+    def __init__(self, attach_type, attach_dict):
+        self.attach_type = attach_type
+        self.attach_dict = attach_dict
+
+    def render(self):
+        """
+        Decides how to render an attachment and render it
+        """
+
+        func_dispatcher = {
+            'photo': Attachment._photo_rendering, 'video': Attachment._video_rendering,
+            'audio': Attachment._audio_rendering, 'doc': Attachment._doc_rendering,
+            'link': Attachment._link_rendering, 'album': Attachment._album_rendering,
+            'poll': Attachment._poll_rendering
+        }
+
+        return func_dispatcher[self.attach_type](self.attach_dict)
+
+    def _photo_rendering(photo_dict):
+        """
+        Returns info about rendering a photo attachment
+
+        :param photo_dict: dictionary, looks like {'photo_130': ...,
+                           'text': ..., ...}, see VK API
+        :returns: string, contain html tags
+        """
+
+        # Get the url of the best quality image
+        photo_url = (
+            photo_dict.get('photo_2560') or photo_dict.get('photo_1280') or
+            photo_dict.get('photo_807') or photo_dict.get('photo_604') or
+            photo_dict.get('photo_130') or photo_dict.get('photo_75')
+        )
+
+        return Attachment._image_tag(photo_url, photo_dict['text'])
+
+    def _video_rendering(video_dict):
+        """
+        Returns info about rendering a video attachment
+
+        :param video_dict: dictionary, looks like {'photo_130': ...,
+                           'title': ..., ...}, see VK API
+
+        :returns: string, contain html tags
+        """
+
+        # Get the url of the best quality image
+        photo_url = (
+            video_dict.get('photo_800') or video_dict.get('photo_640') or
+            video_dict.get('photo_320') or video_dict.get('photo_130')
+        )
+
+        return Attachment._image_tag(photo_url, video_dict['title'] + ' [Video]')
+
+    def _audio_rendering(audio_dict):
+        """
+        Returns info about rendering an audio attachment
+
+        :param audio_dict: dictionary, looks like {'artist': ...,
+                           'title': ..., ...}, see VK API
+        :returns: string, contain html tags
+        """
+
+        audio_tag = '<a href="{}">{} - {} [Audio]</a>'.format(
+            audio_dict['url'],
+            audio_dict['artist'],
+            audio_dict['title']
+        )
+
+        return audio_tag
+
+    def _doc_rendering(doc_dict):
+        """
+        Returns info about rendering a doc attachment
+
+        :param doc_dict: dictionary, looks like {'size': ...,
+                           'title': ..., ...}, see VK API
+        :returns: string, contain html tags
+        """
+
+        # It's a .gif
+        if doc_dict['type'] == 3:
+            doc_tag = Attachment._image_tag(doc_dict['url'], doc_dict['title'])
+        else:
+            doc_tag = '<a href="{}">{} - {:.2f}MB [Doc]</a>'.format(
+                doc_dict['url'],
+                doc_dict['title'],
+                doc_dict['size'] / 1024**2
+            )
+
+        return doc_tag
+
+    def _link_rendering(link_dict):
+        """
+        Returns info about rendering a link attachment
+
+        :param link_dict: dictionary, looks like {'url': ...,
+                           'title': ..., ...}, see VK API
+        :returns: string, contain html tags
+        """
+
+        preview = link_dict.get('photo')
+        preview_tag = ''
+        if preview:
+            preview_tag = Attachment._photo_rendering(preview).split('<p>')[0]
+
+        link_tag = '<a href="{}">{}<p>{} [Link]</p></a>'.format(
+            link_dict['url'],
+            preview_tag,
+            link_dict['title']
+        )
+
+        return link_tag
+
+    def _album_rendering(album_dict):
+        """
+        Returns info about rendering an album attachment
+
+        :param album_dict: dictionary, looks like {'thumb': ...,
+                           'title': ..., ...}, see VK API
+        :returns: string, contain html tags
+        """
+
+        thumb_tag = Attachment._photo_rendering(album_dict['thumb']).split('<p>')
+        album_tag = thumb_tag[0] + '<p>{} [Album]</p>'.format(album_dict['title'])
+
+        return album_tag
+
+    def _poll_rendering(poll_dict):
+        """
+        Returns info about rendering a poll attachment
+
+        :param poll_dict: dictionary, looks like {'votes': ...,
+                           'question': ..., ...}, see VK API
+        :returns: string, contain html tags
+        """
+
+        poll_lines = []
+        poll_lines.append('Pole: {}'.format(poll_dict['question']))
+        poll_lines.append('-' * 30)
+        for ans in poll_dict['answers']:
+            poll_lines.append('{} -- {}'.format(ans['text'], ans['rate']))
+        poll_lines.append('-' * 30)
+        poll_lines.append('Number of votes: {}'.format(poll_dict['votes']))
+
+        return '<br>'.join(poll_lines)
+
+    def _image_tag(url, description):
+        """Returns html tags for an image and its description"""
+        return '<img src="{}"><p>{}</p>'.format(url, description)
+
 
 def not_rendered_element_tag(element_type):
     """Returns html tag for an element we do not want to render"""
     return '<strong>You can find {} in the post</strong>'.format(element_type)
-
-def photo_rendering(photo_dict):
-    """
-    Returns info about rendering a photo attachment
-
-    :param photo_dict: dictionary, looks like {'photo_130': ...,
-                       'text': ..., ...}, see VK API
-    :returns: string, contain html tags
-    """
-
-    # Get the url of the best quality image
-    photo_url = (
-        photo_dict.get('photo_2560') or photo_dict.get('photo_1280') or
-        photo_dict.get('photo_807') or photo_dict.get('photo_604') or
-        photo_dict.get('photo_130') or photo_dict.get('photo_75')
-    )
-
-    return image_tag(photo_url, photo_dict['text'])
-
-def video_rendering(video_dict):
-    """
-    Returns info about rendering a video attachment
-
-    :param video_dict: dictionary, looks like {'photo_130': ...,
-                       'title': ..., ...}, see VK API
-
-    :returns: string, contain html tags
-    """
-
-    # Get the url of the best quality image
-    photo_url = (
-        video_dict.get('photo_800') or video_dict.get('photo_640') or
-        video_dict.get('photo_320') or video_dict.get('photo_130')
-    )
-
-    return image_tag(photo_url, video_dict['title'] + ' [Video]')
-
-def audio_rendering(audio_dict):
-    """
-    Returns info about rendering an audio attachment
-
-    :param audio_dict: dictionary, looks like {'artist': ...,
-                       'title': ..., ...}, see VK API
-    :returns: string, contain html tags
-    """
-
-    audio_tag = '<a href="{}">{} - {} [Audio]</a>'.format(
-        audio_dict['url'],
-        audio_dict['artist'],
-        audio_dict['title']
-    )
-
-    return audio_tag
-
-def doc_rendering(doc_dict):
-    """
-    Returns info about rendering a doc attachment
-
-    :param doc_dict: dictionary, looks like {'size': ...,
-                       'title': ..., ...}, see VK API
-    :returns: string, contain html tags
-    """
-
-    # It's a .gif
-    if doc_dict['type'] == 3:
-        doc_tag = image_tag(doc_dict['url'], doc_dict['title'])
-    else:
-        doc_tag = '<a href="{}">{}.{} - {:.2}MB [Doc]</a>'.format(
-            doc_dict['url'],
-            doc_dict['title'],
-            doc_dict['ext'],
-            doc_dict['size'] / 1024**2
-        )
-
-    return doc_tag
-
-def link_rendering(link_dict):
-    """
-    Returns info about rendering a link attachment
-
-    :param link_dict: dictionary, looks like {'url': ...,
-                       'title': ..., ...}, see VK API
-    :returns: string, contain html tags
-    """
-
-    preview = link_dict.get('photo')
-    preview_tag = ''
-    if preview:
-        preview_tag = photo_rendering(preview).split('<p>')[0]
-
-    link_tag = '<a href="{}">{}<p>{} [Link]</p></a>'.format(
-        link_dict['url'],
-        preview_tag,
-        link_dict['title']
-    )
-
-    return link_tag
-
-def album_rendering(album_dict):
-    """
-    Returns info about rendering an album attachment
-
-    :param album_dict: dictionary, looks like {'thumb': ...,
-                       'title': ..., ...}, see VK API
-    :returns: string, contain html tags
-    """
-
-    thumb_tag = photo_rendering(album_dict['thumb']).split('<p>')
-    album_tag = thumb_tag[0] + '<p>{} [Album]</p>'.format(album_dict['title'])
-
-    return album_tag
-
-def poll_rendering(poll_dict):
-    """
-    Returns info about rendering a poll attachment
-
-    :param poll_dict: dictionary, looks like {'votes': ...,
-                       'question': ..., ...}, see VK API
-    :returns: string, contain html tags
-    """
-
-    poll_lines = []
-    poll_lines.append('Pole: {}'.format(poll_dict['question']))
-    poll_lines.append('-' * 20)
-    for ans in poll_dict['answers']:
-        poll_lines.append('{} -- {}'.format(ans['text'], ans['rate']))
-    poll_lines.append('-' * 20)
-    poll_lines.append('Number of votes: {}'.format(poll_dict['votes']))
-
-    return '<br>'.join(poll_lines)
 
 def description_post(post):
     """
@@ -174,12 +198,7 @@ def description_post(post):
         t: 0 for t in ['photos_list', 'comments', 'note', 'page',
                        'market', 'market_album', 'sticker']
     }
-    func_dispatcher = {
-        'photo': photo_rendering, 'video': video_rendering,
-        'audio': audio_rendering, 'doc': doc_rendering,
-        'link': link_rendering, 'album': album_rendering,
-        'poll': poll_rendering
-    }
+
     # Go through the attachments and form what every
     # attachment should look like in the feed
     for att in post.get('attachments', []):
@@ -187,15 +206,16 @@ def description_post(post):
         # know about
         att_type = att['type']
         if att_type in not_rendered_elms:
-            not_rendered_elms[att['type']] = 1
+            not_rendered_elms[att_type] = 1
             continue
 
-        attachment_tags.append(func_dispatcher[att_type](att[att_type]))
+        att_obj = Attachment(att_type, att[att_type])
+        attachment_tags.append(att_obj.render())
 
     # If the post is a repost, post['copy_history'] does not have
     # 'comments' key. So it may have comments but I do not need them
     comments = post.get('comments', {'count': 0})
-    if comments['count'] != 0:
+    if comments['count']:
         not_rendered_elms['comments'] = 1
 
     # Collect info about not rendered elements (so we know
@@ -240,7 +260,7 @@ def post_parsing(post, group_name):
 
     return post_data
 
-def rss_feed_from_group(api, group, reposts=True):
+def rss_feed_for_group(api, group, reposts=True):
     """
     Create rss feed based on the group posts
 
@@ -257,8 +277,8 @@ def rss_feed_from_group(api, group, reposts=True):
     # so if we going to refresh a feed every 20 minutes (it's 72 a day),
     # we should be ok with about 138 groups (if I get it right)
     try:
-        # Get the first 40 (should be enough) posts from a group
-        posts = api.wall.get(domain=group, count=40)['items']
+        # Get the first 60 (should be enough) posts from a group
+        posts = api.wall.get(domain=group, count=60)['items']
         # Get the name of a group
         group_name = api.groups.getById(group_id=group)[0]['name']
     except VkApiError as error_msg:
@@ -304,7 +324,7 @@ def rss_feed_from_group(api, group, reposts=True):
 if __name__ == '__main__':
 
     # Read user data, path and groups' names
-    with open('init_data.txt') as f:
+    with open('init_data.txt', encoding='utf-8') as f:
         USERNAME, PASSWORD, PATH_TO_SAVE_XML, REPOSTS = [
             f.readline().rstrip() for _ in range(4)
         ]
@@ -329,9 +349,9 @@ if __name__ == '__main__':
     # Go through the groups
     for group in GROUPS:
         if REPOSTS.lower() == 'true':
-            fg = rss_feed_from_group(api, group)
+            fg = rss_feed_for_group(api, group)
         else:
-            fg = rss_feed_from_group(api, group, reposts=False)
+            fg = rss_feed_for_group(api, group, reposts=False)
         # Write .xml file
         xml_name = PATH_TO_SAVE_XML + '\\vk_feed_{}.xml'.format(group)
         fg.rss_file(xml_name)
