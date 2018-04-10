@@ -276,9 +276,27 @@ def rss_feed_for_group(api, group, reposts=True):
     # VK API allows to make 10000 calls per day with wall.get_localzone
     # so if we going to refresh a feed every 20 minutes (it's 72 a day),
     # we should be ok with about 138 groups (if I get it right)
+
+    # Get the first 60 (should be enough) posts from a group
+    vargs = {'domain': group, 'count': 60}
+
+    # If a group doesn't have a short name, its url looks like,
+    # for example, this: vk.com/club526452694, but, in general, a group
+    # can have a short name beginning with 'club'. The problem is that
+    # VK API doesn't allow to get the posts from the group 'club526452694'
+    # if we use it as the short name (it returns an empty list) therefore
+    # we have to check it
+    if group[:4] == 'club':
+        # So if it's a shortname beginning with 'club', we get an exception
+        try:
+            owner_id = -1 * int(group[4:])
+            vargs['owner_id'] = owner_id
+            del vargs['domain']
+        except ValueError:
+            pass
+
     try:
-        # Get the first 60 (should be enough) posts from a group
-        posts = api.wall.get(domain=group, count=60)['items']
+        posts = api.wall.get(**vargs)['items']
         # Get the name of a group
         group_name = api.groups.getById(group_id=group)[0]['name']
     except VkApiError as error_msg:
